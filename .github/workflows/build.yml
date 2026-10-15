@@ -1,0 +1,45 @@
+name: Build public Wan 5B runtime
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check free runner and reclaim disposable toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          for path in /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache; do
+            if [ -d "$path" ] && [ "$(readlink -f "$path")" = "$path" ]; then
+              sudo rm -rf -- "$path"
+            fi
+          done
+          df -h /
+          available=$(df -B1 --output=avail / | tail -1 | tr -d ' ')
+          test "$available" -ge 55000000000 || { echo 'Insufficient free disk; stopping without paid fallback.'; exit 1; }
+      - name: Fetch this public recipe at the exact commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C source fetch --depth=1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Publish runtime with short-lived built-in authentication
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          image="ghcr.io/rosepay1004-bot/moacut-wan5b:wan22-5b-340-${GITHUB_SHA:0:12}"
+          docker buildx create --name runtime-builder --driver docker-container --use
+          docker buildx build --platform linux/amd64 --progress plain --push --tag "$image" --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" --metadata-file /tmp/runtime-metadata.json source
+          python3 -c 'import json; print("PUBLISHED_DIGEST",json.load(open("/tmp/runtime-metadata.json"))["containerimage.digest"])'
