@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!constraints.txt
+!models.json
+!prepare_requirements.py
+!verify_models.py
+!fetch_model.py
+!fetch_remaining.py
