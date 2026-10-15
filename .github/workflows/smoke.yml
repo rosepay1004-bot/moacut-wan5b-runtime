@@ -1,0 +1,47 @@
+name: Verify public runtime without GPU
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: Published sha256 digest
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check free runner and disposable disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          for path in /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache; do
+            if [ -d "$path" ] && [ "$(readlink -f "$path")" = "$path" ]; then
+              sudo rm -rf -- "$path"
+            fi
+          done
+          df -h /
+          available=$(df -B1 --output=avail / | tail -1 | tr -d ' ')
+          test "$available" -ge 55000000000
+      - name: Fetch exact public test source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C source fetch --depth=1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Anonymous pull and CPU-only smoke test
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          image="ghcr.io/rosepay1004-bot/moacut-wan5b@$IMAGE_DIGEST"
+          docker pull "$image"
+          docker run --rm --network none --entrypoint python "$image" -c "$(cat source/smoke_runtime.py)"
